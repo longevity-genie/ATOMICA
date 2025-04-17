@@ -4,7 +4,7 @@ from data.dataset import Block, Atom, VOCAB
 from data.converter.atom_blocks_to_frag_blocks import atom_blocks_to_frag_blocks
 
 
-def extract_pdb_ligand(pdb, lig_code, chain_id, smiles, use_model:int =None, fragmentation_method=None):
+def extract_pdb_ligand(pdb, lig_code, chain_id, smiles, lig_idx:int=None, use_model:int=None, fragmentation_method=None):
     # fragmentation_method: ['PS_300', 'PS_500']
     if pdb.endswith(".pdb"):
         parser = PDBParser(QUIET=True)
@@ -28,7 +28,7 @@ def extract_pdb_ligand(pdb, lig_code, chain_id, smiles, use_model:int =None, fra
 
         for residue in chain:
             hetero_flag, res_number, insert_code = residue.get_id()
-            if hetero_flag.strip() != '' and hetero_flag == f"H_{lig_code}":
+            if hetero_flag.strip() != '' and hetero_flag == f"H_{lig_code}" and (res_number == lig_idx or lig_idx is None):
                 atoms = []
                 for atom in residue:
                     atoms.append(Atom(atom.get_id(), atom.get_coord(), atom.element))
@@ -41,4 +41,6 @@ def extract_pdb_ligand(pdb, lig_code, chain_id, smiles, use_model:int =None, fra
                 indexes = [f"{_id}_{res_number}"]*len(blocks)
                 list_blocks.append(blocks)
                 list_indexes.append(indexes)
+    if len(list_blocks) == 0:
+        raise ValueError(f"Could not find ligand {lig_code} at {lig_idx} in {pdb}.")
     return list_blocks, list_indexes

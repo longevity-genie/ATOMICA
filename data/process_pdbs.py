@@ -2,9 +2,12 @@ import argparse
 import pandas as pd
 import pickle
 from tqdm import tqdm
-from .converter.pdb_lig_to_blocks import extract_pdb_ligand
-from .converter.pdb_to_list_blocks import pdb_to_list_blocks
-from .dataset import blocks_interface, blocks_to_data
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from data.converter.pdb_lig_to_blocks import extract_pdb_ligand
+from data.converter.pdb_to_list_blocks import pdb_to_list_blocks
+from data.dataset import blocks_interface, blocks_to_data
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Process PDB data for embedding with ATOMICA')
@@ -15,7 +18,8 @@ def parse_args():
                             chain2: chain of the ligand delimited with '_', 
                             lig_code: ligand code if ligand, leave empty/None if the interface is chain 2. If lig, then chain2 must refer to the chain the ligand is on.
                             lig_smiles: smiles for ligand, used for fragmentation of ligand into common chemical motifs.
-                            label (optional): binding affinity label for the interaction, leave empty/None if not available.
+                            lig_resi: residue index (integer) of the ligand, used for matching the ligand in the pdb file.
+                            label (optional): label for the interaction, e.g. binding affinity, leave empty/None if not available.
                         """)
     parser.add_argument('--out_path', type=str, required=True, help='Output path')
     parser.add_argument('--interface_dist_th', type=float, default=8.0,
@@ -23,9 +27,9 @@ def parse_args():
     parser.add_argument('--fragmentation_method', type=str, default=None, choices=['PS_300'], help='fragmentation method for small molecule ligands')
     return parser.parse_args()
 
-def process_PL_pdb(pdb_file, pdb_id, rec_chain, lig_code, lig_chain, smiles, dist_th, fragmentation_method=None):
+def process_PL_pdb(pdb_file, pdb_id, rec_chain, lig_code, lig_chain, smiles, lig_resi, dist_th, fragmentation_method=None):
     items = []
-    list_lig_blocks, list_lig_indexes = extract_pdb_ligand(pdb_file, lig_code, lig_chain, smiles, use_model=0, fragmentation_method=fragmentation_method)
+    list_lig_blocks, list_lig_indexes = extract_pdb_ligand(pdb_file, lig_code, lig_chain, smiles, lig_idx=lig_resi, use_model=0, fragmentation_method=fragmentation_method)
     rec_blocks, rec_indexes = pdb_to_list_blocks(pdb_file, selected_chains=rec_chain, return_indexes=True)
     rec_blocks = sum(rec_blocks, [])
     rec_indexes = sum(rec_indexes, [])
@@ -89,7 +93,8 @@ def main(args):
         chain1 = row['chain1']
         chain2 = row['chain2']
         lig_code = row['lig_code']
-        smiles = row['lig_smiles']
+        smiles = row['lig_smiles'] if not pd.isna(row['lig_smiles']) or row['lig_smiles'] == '' else None
+        lig_resi = int(row['lig_resi']) if not pd.isna(row['lig_resi']) or row['lig_resi'] == '' else None
         chain1 = chain1.split("_")
         chain2 = chain2.split("_")
         if 'label' in row:
@@ -109,7 +114,7 @@ def main(args):
             if len(chain2) > 1:
                 raise ValueError(f"Invalid chain2, ligand chain must be a single chain. pdb={pdb_file}")
             chain2 = chain2[0]
-            pl_items = process_PL_pdb(pdb_file, pdb_id, chain1, lig_code, chain2, smiles, args.interface_dist_th, fragmentation_method=args.fragmentation_method)
+            pl_items = process_PL_pdb(pdb_file, pdb_id, chain1, lig_code, chain2, smiles, lig_resi, args.interface_dist_th, fragmentation_method=args.fragmentation_method)
             if len(pl_items) == 0:
                 print(f"WARNING: Invalid interface, no interface found. pdb={pdb_id}, chain1={''.join(chain1)}, chain2={chain2}, lig_code={lig_code}")
             elif len(pl_items) > 1:
