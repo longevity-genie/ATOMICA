@@ -52,7 +52,7 @@ Refer to the jupyter notebook at `case_studies/atomica_net/example_atomica_net.i
 ### Embedding your own structures
 Make sure to download the ATOMICA model weights and config files from [Hugging Face](https://huggingface.co/ada-f/ATOMICA).
 
-**For embedding biomolecular complexes:** process .pdb files with `data/process_pdbs.py` and embed with `get_embeddings.py`.
+**For embedding biomolecular complexes:** process .pdb files with `data/process_pdbs.py` and embed with `get_embeddings.py`. See further details for data processing in the `data/README.md` file [here](https://github.com/mims-harvard/ATOMICA/tree/main/data).
 
 **For embedding protein-(ion/small molecule/lipid/nucleic acid/protein) interfaces:** first predict (ion/small molecule/lipid/nucleic acid/protein) binding sites with [PeSTo](https://github.com/LBM-EPFL/PeSTo), second process the PeSTo output .pdb files with `data/process_PeSTo_results.py`, finally embed with `get_embeddings.py`.
 
