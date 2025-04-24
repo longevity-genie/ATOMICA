@@ -52,3 +52,11 @@ The output is a pickle file containing the processed interaction complexes as a 
     * `block_lengths`: list of integers of shape [Nblock] which contains the number of atoms in each block.
     * `segment_ids`: list of integers of shape [Nblock] which contains the segment id of each block. Segment id is 0 for the first interface and 1 for the second interface.
     * `atom_positions`: deprecated.
+
+## Embedding your own structures
+To embed your own structures with ATOMICA, please use the `get_embeddings.py` script. The script takes in a processed data file and outputs the embeddings for each interface. You will need to provide the following inputs:
+* `--model_config`: the path to the model config file. Download the model config from [Hugging Face](https://huggingface.co/ada-f/ATOMICA).
+* `--model_weights`: the path to the model weights file. Download the model weights from [Hugging Face](https://huggingface.co/ada-f/ATOMICA).
+* `--model_ckpt`: (not needed if model config and weights are specified) the path to the pickled model object.
+* `--data_path`: the path to the processed data file from above. This should be a pickle file containing the processed interaction complexes.
+* `--output_path`: the path to the output file where the embeddings will be saved. This should be a pickle file. The output will be a list of dictionaries, with one dictionary for each molecular complex, each containing the following keys: `id`, `graph_embedding`, `block_id`, `block_embedding`,  `atom_id`, and `atom_embedding`.

@@ -101,8 +101,8 @@ def parse_args():
     parser.add_argument('--model_ckpt', type=str, default=None, help='path of the model ckpt to load')
     parser.add_argument('--model_config', type=str, default=None, help='path of the model config to load')
     parser.add_argument('--model_weights', type=str, default=None, help='path of the model weights to load')
-    parser.add_argument("--output_path", type=str, required=True)
-    parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--output_path", type=str, required=True, help='Path to save the output embeddings, should be a .pkl file')
+    parser.add_argument("--data_path", type=str, required=True, help='Path to the data file either in json or pickle format')
     parser.add_argument("--batch_size", type=int, default=4)
     return parser.parse_args()
 
