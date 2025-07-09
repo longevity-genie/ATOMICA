@@ -3,8 +3,11 @@
 
 **Authors**
 * Ada Fang
+* Michael Desgagné
 * Zaixi Zhang
 * Andrew Zhou
+* Joseph Loscalzo
+* Bradley L. Pentelute
 * Marinka Zitnik
 
 [Preprint](https://www.biorxiv.org/content/10.1101/2025.04.02.646906v1) | [Project Website](https://zitniklab.hms.harvard.edu/projects/ATOMICA)
@@ -39,20 +42,20 @@ Model checkpoints are provided on [Hugging Face](https://huggingface.co/ada-f/AT
     * metal ions: Ca, Co, Cu, Fe, K, Mg, Mn, Na, Zn
     * small molecules: ADP, ATP, GTP, GDP, FAD, NAD, NAP, NDP, HEM, HEC, CIT, CLA
 
-## :star: Usage
-### Train ATOMICA
+## :star: Training
 Training scripts for pretraining ATOMICA and finetuning ATOMICA-Interface and ATOMICA-Ligand are provided in `scripts/`.
 
+## :seedling: Tutorials
 ### Inference with ATOMICA-Ligand
-Refer to the jupyter notebook at `case_studies/atomica_ligand/example_run_atomica_ligand.ipynb` for an example of how to use the model for binder prediction.
+Refer to the jupyter notebook at `tutorials/atomica_ligand/example_run_atomica_ligand.ipynb` for an example of how to use the model for binder prediction.
 
 ### Explore ATOMICANets
-Refer to the jupyter notebook at `case_studies/atomica_net/example_atomica_net.ipynb`
+Refer to the jupyter notebook at `tutorials/atomica_net/example_atomica_net.ipynb`
 
 ### Embedding your own structures
 Make sure to download the ATOMICA model weights and config files from [Hugging Face](https://huggingface.co/ada-f/ATOMICA).
 
-**For embedding biomolecular complexes:** process .pdb files with `data/process_pdbs.py` and embed with `get_embeddings.py`. See further details for data processing in the `data/README.md` file [here](https://github.com/mims-harvard/ATOMICA/tree/main/data).
+**For embedding biomolecular complexes:** process .pdb files with `data/process_pdbs.py` and embed with `get_embeddings.py`. See the tutorial for data processing at `data/README.md` [here](https://github.com/mims-harvard/ATOMICA/tree/main/data) and the examples at `data/example`.
 
 **For embedding protein-(ion/small molecule/lipid/nucleic acid/protein) interfaces:** first predict (ion/small molecule/lipid/nucleic acid/protein) binding sites with [PeSTo](https://github.com/LBM-EPFL/PeSTo), second process the PeSTo output .pdb files with `data/process_PeSTo_results.py`, finally embed with `get_embeddings.py`.
 
