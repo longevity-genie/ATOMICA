@@ -17,14 +17,30 @@ ATOMICA is a geometric AI model that learns universal representations of molecul
 ## :rocket: Installation and Setup
 
 ### 1. Download the Repository
-Clone the Gihub Repository:
+Clone the GitHub Repository:
 ```bash
 git clone https://github.com/mims-harvard/ATOMICA
 cd ATOMICA
 ```
 
+To include the model checkpoints and datasets (hosted as a Git submodule on HuggingFace), initialize and update the submodule:
+```bash
+git submodule init
+git submodule update
+```
+
+Alternatively, you can clone the repository with submodules in one command:
+```bash
+git clone --recurse-submodules https://github.com/mims-harvard/ATOMICA
+cd ATOMICA
+```
+
 ### 2. Set Up Environment
-Set up the environment according to `setup_env.sh`.
+We use `uv` for dependency management. Install dependencies with:
+```bash
+uv sync
+```
+
 
 ### 3. (optional) Download Processed Datasets
 The data for pretraining and downstream analyses is hosted at [Harvard Dataverse](https://doi.org/10.7910/DVN/4DUBJX).
@@ -34,11 +50,11 @@ We provide the following datasets:
 * Processed protein interfaces of human proteome binding sites to ion, small molecule, lipid, nucleic acid, and protein modalities
 * Processed protein interfaces of dark proteome binding sites to ion and small molecules
 
-### 4. Download Model Checkpoints
-Model checkpoints are provided on [Hugging Face](https://huggingface.co/ada-f/ATOMICA). The following models are available:
-* ATOMICA model
-* Pretrained ATOMICA-Interface model
-* Finetuned ATOMICA-Ligand prediction models for the following ligands:
+### 4. Model Checkpoints
+Model checkpoints are available via the `downloads` submodule (hosted on [Hugging Face](https://huggingface.co/ada-f/ATOMICA)). If you initialized the submodule in step 1, the checkpoints are already available in the `downloads/` directory. The following models are included:
+* ATOMICA pretrained model (`downloads/ATOMICA_checkpoints/pretrain/`)
+* Pretrained ATOMICA-Interface model (`downloads/ATOMICA_checkpoints/prot_interface/`)
+* Finetuned ATOMICA-Ligand prediction models for the following ligands (`downloads/ATOMICA_checkpoints/ligand/`):
     * metal ions: Ca, Co, Cu, Fe, K, Mg, Mn, Na, Zn
     * small molecules: ADP, ATP, GTP, GDP, FAD, NAD, NAP, NDP, HEM, HEC, CIT, CLA
 
@@ -53,7 +69,7 @@ Refer to the jupyter notebook at `tutorials/atomica_ligand/example_run_atomica_l
 Refer to the jupyter notebook at `tutorials/atomica_net/example_atomica_net.ipynb`
 
 ### Embedding your own structures
-Make sure to download the ATOMICA model weights and config files from [Hugging Face](https://huggingface.co/ada-f/ATOMICA).
+Make sure you have initialized the Git submodule to access the ATOMICA model weights and config files (see Installation step 1). The model files will be available in the `downloads/ATOMICA_checkpoints/` directory.
 
 **For embedding biomolecular complexes:** process .pdb files with `data/process_pdbs.py` and embed with `get_embeddings.py`. See the tutorial for data processing at `data/README.md` [here](https://github.com/mims-harvard/ATOMICA/tree/main/data) and the examples at `data/example`.
 

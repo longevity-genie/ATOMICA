@@ -1,0 +1,3 @@
+[submodule "downloads"]
+	path = downloads
+	url = https://huggingface.co/ada-f/ATOMICA

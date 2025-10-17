@@ -1,0 +1,63 @@
+[project]
+name = "atomica"
+version = "0.1.0"
+description = "ATOMICA: A deep learning model for molecular structure prediction"
+readme = "README.md"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "numpy==1.26.4",
+    "torch==2.1.1",
+    "torch-scatter",
+    "torch-cluster",
+    "tensorboard==2.18.0",
+    "e3nn==0.5.1",
+    "scipy==1.13.1",
+    "rdkit-pypi==2022.9.5",
+    "openbabel-wheel==3.1.1.20",
+    "biopython==1.84",
+    "biotite==0.40.0",
+    "atom3d",
+    "wandb==0.18.2",
+    "orjson",
+    "umap-learn",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "typer>=0.19.2",
+    "eliot>=1.17.5",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["models", "data", "trainers", "utils", "interaction_profiler"]
+
+[tool.uv]
+# PyTorch Geometric wheels for torch-scatter and torch-cluster
+find-links = ["https://pytorch-geometric.com/whl/torch-2.1.1+cu118.html"]
+
+[tool.uv.sources]
+# Only torch uses CUDA 11.8 specific index
+# torch-scatter and torch-cluster come from find-links
+torch = { index = "pytorch-cu118" }
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
