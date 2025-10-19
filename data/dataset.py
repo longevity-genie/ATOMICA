@@ -436,9 +436,9 @@ class PDBBindBenchmark(torch.utils.data.Dataset):
 
 class PDBDataset(torch.utils.data.Dataset):
 
-    def __init__(self, data_file):
+    def __init__(self, data_file: str, start_idx: int = 0, num_lines: int | None = None):
         super().__init__()
-        self.data = open_data_file(data_file)
+        self.data = open_data_file(data_file, start_idx=start_idx, num_lines=num_lines)
         self.indexes = [ item['id'] for item in self.data ]  # to satify the requirements of inference.py
 
     def __len__(self):
@@ -477,8 +477,8 @@ class PDBDataset(torch.utils.data.Dataset):
 
 
 class ProtInterfaceDataset(PDBDataset):
-    def __init__(self, data_file):
-        super().__init__(data_file)
+    def __init__(self, data_file: str, start_idx: int = 0, num_lines: int | None = None):
+        super().__init__(data_file, start_idx=start_idx, num_lines=num_lines)
 
         for item in self.data:
             item['prot_data'] = BlockGeoAffDataset.filter_for_segment(item['data'], 0)
@@ -752,19 +752,37 @@ def dataset_to_compressed_jsonl(dataset, output_file):
                 item['block_to_pdb_indexes'] = {str(k): v for k, v in item['block_to_pdb_indexes'].items()}
             f.write(orjson.dumps(item) + b"\n")
 
-def compressed_jsonl_to_dataset(input_file):
+def compressed_jsonl_to_dataset(input_file, start_idx: int = 0, num_lines: int | None = None):
+    """Load JSONL.gz file with optional slicing for memory efficiency.
+    
+    Args:
+        input_file: Path to the compressed JSONL file
+        start_idx: Starting line index (0-based)
+        num_lines: Maximum number of lines to load (None = all remaining lines)
+    """
     dataset = []
+    current_idx = 0
+    end_idx = start_idx + num_lines if num_lines is not None else None
+    
     with gzip.open(input_file, 'rb') as f:
         for line in f:
+            if current_idx < start_idx:
+                current_idx += 1
+                continue
+            if end_idx is not None and current_idx >= end_idx:
+                break
+            
             item = orjson.loads(line)
             if 'block_to_pdb_indexes' in item:
                 item['block_to_pdb_indexes'] = {int(k): v for k, v in item['block_to_pdb_indexes'].items()}
             dataset.append(item)
+            current_idx += 1
+    
     return dataset
 
-def open_data_file(data_file):
+def open_data_file(data_file, start_idx: int = 0, num_lines: int | None = None):
     if data_file.endswith('.jsonl.gz'):
-        return compressed_jsonl_to_dataset(data_file)
+        return compressed_jsonl_to_dataset(data_file, start_idx=start_idx, num_lines=num_lines)
     elif data_file.endswith('.pkl'):
         with open(data_file, 'rb') as f:
             return pickle.load(f)
