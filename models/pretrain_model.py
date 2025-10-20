@@ -228,7 +228,7 @@ class DenoisePretrainModel(nn.Module):
         assert config['model_type'] == cls.__name__, f"Model type {config['model_type']} does not match {cls.__name__}"
         del config['model_type']
         model = DenoisePretrainModel(**config)
-        model.load_state_dict(torch.load(weights_path))
+        model.load_state_dict(torch.load(weights_path, weights_only=False))
         return model
 
 
@@ -472,7 +472,7 @@ class DenoisePretrainModelWithBlockEmbedding(DenoisePretrainModel):
         assert config['model_type'] == cls.__name__, f"Model type {config['model_type']} does not match {cls.__name__}"
         del config['model_type']
         model = DenoisePretrainModelWithBlockEmbedding(**config)
-        model.load_state_dict(torch.load(weights_path))
+        model.load_state_dict(torch.load(weights_path, weights_only=False))
         return model
     
     def init_block_embedding(self, nonlinearity: nn.Module, block_embedding_size: int, projector_dropout: float, projector_hidden_size: int, num_projector_layers: int):

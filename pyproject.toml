@@ -39,7 +39,7 @@ dev = [
 
 [project.scripts]
 embed = "get_embeddings:app"
-interact-profiler = "interaction_profiler.interact_score:app"
+interact-score = "interaction_profiler.interact_score:app"
 pdb-converter = "pdb_converter:app"
 
 [build-system]

@@ -300,22 +300,22 @@ def generate_tsv_report(
     return tsv
 
 
-@app.command()
-def compute_interact_scores(
-    data_path: Path = typer.Option(
-        ..., help="Path to data file (JSON/JSONL/pickle) or PDB/CIF file", exists=True, file_okay=True
+@app.command(name="interact-score")
+def interact_score(
+    input: Path = typer.Option(
+        ..., help="Path to input file (JSON/JSONL/pickle or PDB/CIF file)", exists=True, file_okay=True
     ),
-    output_path: Path = typer.Option(
-        ..., help="Output JSON file for importance scores", file_okay=True
+    output: Optional[Path] = typer.Option(
+        None, help="Output JSON file for importance scores (default: output/{input_stem}_interact_scores.json)", file_okay=True
     ),
     model_ckpt: Optional[Path] = typer.Option(
         None, help="Path to the model checkpoint (or use --model-config and --model-weights)", exists=True, file_okay=True
     ),
     model_config: Optional[Path] = typer.Option(
-        None, help="Path to model config JSON (alternative to --model-ckpt)", exists=True, file_okay=True
+        None, help="Path to model config JSON (default: downloads/ATOMICA_checkpoints/pretrain/pretrain_model_config.json)", exists=True, file_okay=True
     ),
     model_weights: Optional[Path] = typer.Option(
-        None, help="Path to model weights (alternative to --model-ckpt)", exists=True, file_okay=True
+        None, help="Path to model weights (default: downloads/ATOMICA_checkpoints/pretrain/pretrain_model_weights.pt)", exists=True, file_okay=True
     ),
     chains: Optional[str] = typer.Option(
         None, help="Comma-separated chain IDs (e.g., 'A,B') - only for PDB/CIF input"
@@ -327,7 +327,7 @@ def compute_interact_scores(
         None, help="Maximum number of lines to process (None = all lines) - ignored for PDB input"
     ),
     summary_path: Path | None = typer.Option(
-        None, help="Optional path to save processing summary report (JSON)"
+        None, help="Path to save processing summary report (default: output/{input_stem}_summary.json)"
     ),
 ) -> None:
     """Compute interaction scores (importance of each block) for protein structures.
@@ -342,14 +342,49 @@ def compute_interact_scores(
     specific slices:
     
     Example: Process only lines 1000-2000 from a large file:
-        interact-profiler compute-interact-scores \\
-          --data-path large_file.jsonl.gz \\
-          --output-path output.jsonl \\
+        interact-score \\
+          --input large_file.jsonl.gz \\
+          --output output.jsonl \\
           --model-ckpt model.pt \\
           --start-idx 1000 \\
           --num-lines 1000 \\
           --summary-path summary.json
     """
+    # Set default paths if not provided
+    if output is None:
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
+        output = output_dir / f"{input.stem}_interact_scores.json"
+    
+    if summary_path is None:
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
+        summary_path = output_dir / f"{input.stem}_summary.json"
+    
+    # Set default model paths if not provided
+    if model_ckpt is None and (model_config is None or model_weights is None):
+        project_root = Path(__file__).parent.parent
+        default_config = project_root / "downloads/ATOMICA_checkpoints/pretrain/pretrain_model_config.json"
+        default_weights = project_root / "downloads/ATOMICA_checkpoints/pretrain/pretrain_model_weights.pt"
+        
+        if model_config is None:
+            if default_config.exists():
+                model_config = default_config
+            else:
+                raise ValueError(
+                    f"Default model config not found at {default_config}. "
+                    "Please specify --model-config or --model-ckpt."
+                )
+        
+        if model_weights is None:
+            if default_weights.exists():
+                model_weights = default_weights
+            else:
+                raise ValueError(
+                    f"Default model weights not found at {default_weights}. "
+                    "Please specify --model-weights or --model-ckpt."
+                )
+    
     # Parse chains if provided
     chain_list: Optional[List[str]] = None
     if chains:
@@ -357,22 +392,22 @@ def compute_interact_scores(
     
     # Detect if input is PDB format and convert if needed
     temp_jsonl_file: Optional[Path] = None
-    actual_data_path = data_path
+    actual_data_path = input
     
-    if is_pdb_format(data_path):
-        print(f"🔄 PDB/CIF input detected, converting to JSONL...")
-        temp_jsonl_file = convert_pdb_to_jsonl_temp(data_path, chains=chain_list)
+    if is_pdb_format(input):
+        typer.echo(f"🔄 PDB/CIF input detected, converting to JSONL...")
+        temp_jsonl_file = convert_pdb_to_jsonl_temp(input, chains=chain_list)
         actual_data_path = temp_jsonl_file
         # For PDB input, ignore start_idx and num_lines
         start_idx = 0
         num_lines = None
-        print(f"✓ Converted to temporary file")
+        typer.echo(f"✓ Converted to temporary file")
     
     try:
         with start_action(
-            action_type="compute_interact_scores",
-            data_path=str(actual_data_path),
-            output_path=str(output_path),
+            action_type="interact_score",
+            input=str(actual_data_path),
+            output=str(output),
             model_ckpt=str(model_ckpt),
             start_idx=start_idx,
             num_lines=num_lines,
@@ -411,15 +446,15 @@ def compute_interact_scores(
             peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
             peak_memory_per_structure.append(peak_memory_mb)
             
-            output = {
+            result = {
                 "id": dataset.indexes[i],
                 "cos_distances": cos_distances,
                 "block_idx": block_idx,
                 "time_seconds": round(structure_time, 4),
                 "peak_memory_mb": round(peak_memory_mb, 2),
             }
-            with open(output_path, "a") as f:
-                f.write(json.dumps(output) + "\n")
+            with open(output, "a") as f:
+                f.write(json.dumps(result) + "\n")
             
             # Log metrics periodically
             if (i + 1) % 10 == 0:
@@ -456,66 +491,65 @@ def compute_interact_scores(
                 "mean": round(avg_memory, 2),
                 "max": round(max_memory, 2),
             },
-            "output_file": str(output_path),
-            "data_file": str(data_path),
+            "output_file": str(output),
+            "input_file": str(input),
             "start_idx": start_idx,
             "num_lines": num_lines,
         }
         
         # Print summary to console
-        print("\n" + "="*70)
-        print("PROCESSING SUMMARY")
-        print("="*70)
-        print(f"Total structures processed: {summary_report['total_structures']}")
-        print(f"Total time: {summary_report['total_time_seconds']:.2f}s "
+        typer.echo("\n" + "="*70)
+        typer.echo("PROCESSING SUMMARY")
+        typer.echo("="*70)
+        typer.echo(f"Total structures processed: {summary_report['total_structures']}")
+        typer.echo(f"Total time: {summary_report['total_time_seconds']:.2f}s "
               f"({summary_report['total_time_minutes']:.2f} minutes)")
-        print(f"Time per structure: {summary_report['time_per_structure']['mean']:.2f}s ± "
+        typer.echo(f"Time per structure: {summary_report['time_per_structure']['mean']:.2f}s ± "
               f"{summary_report['time_per_structure']['std']:.2f}s "
               f"(min: {summary_report['time_per_structure']['min']:.2f}s, "
               f"max: {summary_report['time_per_structure']['max']:.2f}s)")
-        print(f"Estimated remaining time per structure: ~{summary_report['time_per_structure']['mean']:.2f}s")
-        print(f"\nGPU Memory per structure: {summary_report['gpu_memory_mb']['mean']:.1f} MB (avg), "
+        typer.echo(f"Estimated remaining time per structure: ~{summary_report['time_per_structure']['mean']:.2f}s")
+        typer.echo(f"\nGPU Memory per structure: {summary_report['gpu_memory_mb']['mean']:.1f} MB (avg), "
               f"{summary_report['gpu_memory_mb']['max']:.1f} MB (peak)")
-        print("="*70)
-        print(f"Output saved to: {output_path}")
+        typer.echo("="*70)
+        typer.echo(f"Output saved to: {output}")
         
-        # Save summary report if requested
-        if summary_path:
-            with open(summary_path, "w") as f:
-                json.dump(summary_report, f, indent=2)
-            print(f"Summary report saved to: {summary_path}")
+        # Save summary report
+        with open(summary_path, "w") as f:
+            json.dump(summary_report, f, indent=2)
+        typer.echo(f"Summary report saved to: {summary_path}")
         
         # Generate extended analysis with residue information (only for PDB inputs)
-        if is_pdb_format(data_path) and len(dataset) == 1:
-            print("\n" + "="*70)
-            print("GENERATING EXTENDED ANALYSIS")
-            print("="*70)
+        if is_pdb_format(input) and len(dataset) == 1:
+            typer.echo("\n" + "="*70)
+            typer.echo("GENERATING EXTENDED ANALYSIS")
+            typer.echo("="*70)
             
             # Load the interaction scores
-            with open(output_path, "r") as f:
+            with open(output, "r") as f:
                 interact_data = json.loads(f.readline())
             
             scores = interact_data['cos_distances']
             block_indices = interact_data['block_idx']
-            structure_id = Path(data_path).stem
+            structure_id = Path(input).stem
             
             # Extract residue information from PDB
             try:
-                residues = get_residue_info_from_pdb(data_path, block_indices, scores)
+                residues = get_residue_info_from_pdb(input, block_indices, scores)
                 
                 # Sort by importance (lowest score = most critical)
                 residues_sorted = sorted(residues, key=lambda x: x['atomica_score'])
                 
                 # Display top 10 critical residues
-                print(f"\n🔴 TOP 10 MOST CRITICAL RESIDUES:")
-                print(f"\n{'Rank':<6} {'Residue':<10} {'Chain':<7} {'Position':<10} {'ATOMICA_SCORE':<15} {'Importance Delta':<15}")
-                print('-'*70)
+                typer.echo(f"\n🔴 TOP 10 MOST CRITICAL RESIDUES:")
+                typer.echo(f"\n{'Rank':<6} {'Residue':<10} {'Chain':<7} {'Position':<10} {'ATOMICA_SCORE':<15} {'Importance Delta':<15}")
+                typer.echo('-'*70)
                 for i, res in enumerate(residues_sorted[:10], 1):
                     res_label = f"{res['res_name']}{res['res_id']}"
-                    print(f"{i:<6} {res_label:<10} {res['chain_id']:<7} {res['res_id']:<10} {res['atomica_score']:.6f}      {res['importance_delta']:.4f}%")
+                    typer.echo(f"{i:<6} {res_label:<10} {res['chain_id']:<7} {res['res_id']:<10} {res['atomica_score']:.6f}      {res['importance_delta']:.4f}%")
                 
                 # Generate TSV report with all residues
-                output_dir = output_path.parent
+                output_dir = output.parent
                 report_file = output_dir / f"{structure_id}_critical_residues.tsv"
                 tsv_text = generate_tsv_report(
                     residues_sorted, 
@@ -525,25 +559,25 @@ def compute_interact_scores(
                 )
                 with open(report_file, 'w', encoding='utf-8') as f:
                     f.write(tsv_text)
-                print(f"\n✅ Saved TSV report: {report_file} ({len(residues_sorted)} residues)")
+                typer.echo(f"\n✅ Saved TSV report: {report_file} ({len(residues_sorted)} residues)")
                 
                 # Generate PyMOL commands
                 pymol_file = output_dir / f"{structure_id}_pymol_commands.pml"
                 pymol_cmds = generate_pymol_commands(residues_sorted, structure_id, top_n=10)
                 with open(pymol_file, 'w', encoding='utf-8') as f:
                     f.write(pymol_cmds)
-                print(f"✅ Saved PyMOL commands: {pymol_file}")
+                typer.echo(f"✅ Saved PyMOL commands: {pymol_file}")
                 
-                print(f"\n💡 To visualize in PyMOL:")
-                print(f"   1. Open structure: pymol {data_path}")
-                print(f"   2. Run script: @{pymol_file}")
-                print(f"   Or copy-paste commands from: {pymol_file}")
-                print(f"\n📊 To analyze residues: Open {report_file} in Excel/LibreOffice")
+                typer.echo(f"\n💡 To visualize in PyMOL:")
+                typer.echo(f"   1. Open structure: pymol {input}")
+                typer.echo(f"   2. Run script: @{pymol_file}")
+                typer.echo(f"   Or copy-paste commands from: {pymol_file}")
+                typer.echo(f"\n📊 To analyze residues: Open {report_file} in Excel/LibreOffice")
                 
             except Exception as e:
-                print(f"⚠️  Could not generate extended analysis: {e}")
+                typer.echo(f"⚠️  Could not generate extended analysis: {e}")
         
-        print()
+        typer.echo()
         
         action.add_success_fields(
             num_structures=len(dataset),
@@ -551,7 +585,8 @@ def compute_interact_scores(
             avg_time_per_structure=round(avg_time, 4),
             avg_memory_mb=round(avg_memory, 2),
             max_memory_mb=round(max_memory, 2),
-            summary_saved=summary_path is not None,
+            summary_saved=True,
+            summary_path=str(summary_path),
         )
     finally:
         # Clean up temporary JSONL file if created
