@@ -3,30 +3,30 @@ name = "atomica"
 version = "0.1.1"
 description = "ATOMICA: A deep learning model for molecular structure prediction"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "numpy>=1.26.4,<2.2",
+    "numpy>=2.0,<2.4",
     "torch>=2.1.1,<2.6",
     "torch-scatter",
     "torch-cluster",
-    "tensorboard>=2.18.0,<2.19",
+    "tensorboard>=2.18.0,<2.21",
     "e3nn>=0.5.1,<0.6",
-    "scipy>=1.13.1,<1.15",
+    "scipy>=1.13.1,<1.17",
     "rdkit>=2023.9.5",
     "openbabel-wheel>=3.1.1.20",
-    "biopython>=1.84,<1.85",
-    "biotite>=0.40.0,<0.46",
+    "biopython>=1.84,<1.86",
+    "biotite>=1.5.0,<2.0",
     "atom3d>=0.2.6",
-    "wandb>=0.18.2,<0.20",
+    "wandb>=0.18.2,<0.23",
     "orjson>=3.9.0,<4.0",
     "umap-learn>=0.5.3,<0.6",
-    "matplotlib>=3.8.0,<3.10",
+    "matplotlib>=3.8.0,<3.11",
     "seaborn>=0.13.0,<0.14",
-    "plotly>=5.17.0,<6.0",
+    "plotly>=5.17.0,<7.0",
     "typer>=0.19.2,<1.0",
     "eliot>=1.17.5,<2.0",
-    "requests>=2.31.0,<2.33",
-    "polars>=1.34.0,<1.38",
+    "requests>=2.31.0,<2.34",
+    "polars>=1.34.0,<2.0",
     "pycomfort>=0.0.18,<0.1",
 ]
 
@@ -51,12 +51,18 @@ packages = ["models", "data", "trainers", "utils", "interaction_profiler"]
 
 [tool.uv]
 # PyTorch Geometric wheels for torch-scatter and torch-cluster
-find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu118.html"]
+# Using CUDA 12.1 wheels which are compatible with CUDA 12.6
+find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu121.html"]
+
+# torch-cluster and torch-scatter need torch as a build dependency
+[tool.uv.extra-build-dependencies]
+torch-cluster = ["torch"]
+torch-scatter = ["torch"]
 
 [tool.uv.sources]
-# Only torch uses CUDA 11.8 specific index
+# Only torch uses CUDA 12.1 specific index
 # torch-scatter and torch-cluster come from find-links
-torch = { index = "pytorch-cu118" }
+torch = { index = "pytorch-cu121" }
 
 [[tool.uv.index]]
 name = "pypi"
@@ -64,7 +70,7 @@ url = "https://pypi.org/simple"
 default = true
 
 [[tool.uv.index]]
-name = "pytorch-cu118"
-url = "https://download.pytorch.org/whl/cu118"
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
 explicit = true
 
