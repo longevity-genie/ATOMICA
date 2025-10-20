@@ -4,6 +4,7 @@ import json
 import sys
 import time
 import warnings
+import tempfile
 
 # Suppress PyTorch deprecation warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='torch')
@@ -19,9 +20,54 @@ from models.prediction_model import PredictionModel
 from models.pretrain_model import DenoisePretrainModel
 from models.prot_interface_model import ProteinInterfaceModel
 from trainers.abs_trainer import Trainer
+from pdb_converter import convert_pdb_directory, pdb_to_jsonl_item
+import orjson
 
 
 app = typer.Typer(help="Generate embeddings from ATOMICA models", add_completion=False)
+
+
+def is_pdb_format(file_path: Path) -> bool:
+    """Check if file is PDB/CIF format (vs JSONL/pickle)."""
+    suffix = file_path.suffix.lower()
+    if suffix in ['.pdb', '.cif', '.ent']:
+        return True
+    if suffix == '.gz':
+        # Check second suffix
+        stem_suffix = Path(file_path.stem).suffix.lower()
+        return stem_suffix in ['.pdb', '.cif', '.ent']
+    return False
+
+
+def convert_pdb_to_jsonl_temp(
+    pdb_path: Path,
+    chains: Optional[List[str]] = None
+) -> Path:
+    """Convert PDB/CIF file to temporary JSONL file.
+    
+    Args:
+        pdb_path: Path to PDB/CIF file
+        chains: Optional list of chain IDs
+    
+    Returns:
+        Path to temporary JSONL file
+    """
+    with start_action(action_type="convert_pdb_to_jsonl", pdb_path=str(pdb_path), chains=chains):
+        # Create temp file
+        temp_file = Path(tempfile.mktemp(suffix='.jsonl'))
+        
+        # Convert
+        item = pdb_to_jsonl_item(pdb_path, chains=chains)
+        
+        # Convert integer keys to strings for orjson compatibility
+        if 'block_to_pdb_indexes' in item and isinstance(item['block_to_pdb_indexes'], dict):
+            item['block_to_pdb_indexes'] = {str(k): v for k, v in item['block_to_pdb_indexes'].items()}
+        
+        # Write
+        with open(temp_file, 'w') as f:
+            f.write(orjson.dumps(item).decode('utf-8') + '\n')
+        
+        return temp_file
 
 
 def load_model(
@@ -248,19 +294,14 @@ def stream_embeddings_to_parquet(
             if len(embeddings_chunk) >= chunk_size:
                 df_chunk = pl.from_dicts(embeddings_chunk)
                 lazy_frames.append(df_chunk.lazy())
-                
-                with start_action(action_type="chunk_collected", embeddings_in_chunk=len(embeddings_chunk), total_processed=processed_items, total_lazy_frames=len(lazy_frames)):
-                    pass
-                
+                start_action(action_type="chunk_collected", embeddings_in_chunk=len(embeddings_chunk), total_processed=processed_items, total_lazy_frames=len(lazy_frames)).__enter__()
                 embeddings_chunk = []  # Clear chunk from CPU memory
         
         # Add any remaining embeddings as a lazy frame
         if embeddings_chunk:
             df_chunk = pl.from_dicts(embeddings_chunk)
             lazy_frames.append(df_chunk.lazy())
-            
-            with start_action(action_type="final_chunk_collected", embeddings_in_chunk=len(embeddings_chunk), total_lazy_frames=len(lazy_frames)):
-                pass
+            start_action(action_type="final_chunk_collected", embeddings_in_chunk=len(embeddings_chunk), total_lazy_frames=len(lazy_frames)).__enter__()
         
         # Now concat all lazy frames and write once with sink_parquet (streaming write!)
         if lazy_frames:
@@ -278,19 +319,22 @@ def stream_embeddings_to_parquet(
 
 @app.command()
 def main(
-    data_path: Path = typer.Option(..., help="Path to the data file either in json or pickle format"),
+    data_path: Path = typer.Option(..., help="Path to data file (JSON/JSONL/pickle) or PDB/CIF file"),
     output_path: Path = typer.Option(..., help="Path to save the output embeddings (parquet format)"),
     model_ckpt: Optional[Path] = typer.Option(None, help="Path of the model checkpoint to load"),
     model_config: Optional[Path] = typer.Option(None, help="Path of the model config to load"),
     model_weights: Optional[Path] = typer.Option(None, help="Path of the model weights to load"),
     batch_size: int = typer.Option(4, help="Batch size for GPU/CUDA processing (controls GPU memory usage)"),
     device: str = typer.Option("cuda", help="Device to use for inference"),
-    start_line: int = typer.Option(0, help="Starting line index for slicing JSONL data (0-based)"),
-    num_lines: Optional[int] = typer.Option(None, help="Maximum number of lines to process (None = all remaining)"),
+    chains: Optional[str] = typer.Option(None, help="Comma-separated chain IDs (e.g., 'A,B') - only for PDB/CIF input"),
+    start_line: int = typer.Option(0, help="Starting line index for slicing JSONL data (0-based) - ignored for PDB input"),
+    num_lines: Optional[int] = typer.Option(None, help="Maximum number of lines to process (None = all remaining) - ignored for PDB input"),
     chunk_size: Optional[int] = typer.Option(None, help="Number of embeddings to accumulate before writing (default: same as batch_size for max memory efficiency)"),
     compression: str = typer.Option("snappy", help="Parquet compression codec: 'snappy', 'zstd', 'lz4', 'gzip', 'brotli', 'uncompressed'"),
 ) -> None:
     """Generate embeddings from ATOMICA models for input data.
+    
+    Supports both JSONL/pickle format and direct PDB/CIF input.
     
     Memory Efficient Streaming:
     - batch_size controls GPU memory: only one batch on GPU at a time
@@ -313,50 +357,76 @@ def main(
     if chunk_size is None:
         chunk_size = batch_size
     
-    with start_action(action_type="generate_embeddings", data_path=str(data_path), output_path=str(output_path), start_line=start_line, num_lines=num_lines, batch_size=batch_size, chunk_size=chunk_size) as action:
-        # Load model
-        with start_action(action_type="load_model"):
-            model: Union[PredictionModel, ProteinInterfaceModel, DenoisePretrainModel] = load_model(model_ckpt, model_config, model_weights)
-        
-        # Prepare dataset
-        with start_action(action_type="prepare_dataset", data_file=str(data_path), start_idx=start_line, num_lines=num_lines):
-            if isinstance(model, ProteinInterfaceModel):
-                with start_action(action_type="extracting_prot_model"):
-                    model = model.prot_model
-                dataset: Union[PDBDataset, ProtInterfaceDataset] = ProtInterfaceDataset(str(data_path), start_idx=start_line, num_lines=num_lines)
-            else:
-                dataset: Union[PDBDataset, ProtInterfaceDataset] = PDBDataset(str(data_path), start_idx=start_line, num_lines=num_lines)
+    # Parse chains if provided
+    chain_list: Optional[List[str]] = None
+    if chains:
+        chain_list = [c.strip() for c in chains.split(",")]
+    
+    # Detect if input is PDB format and convert if needed
+    temp_jsonl_file: Optional[Path] = None
+    actual_data_path = data_path
+    
+    if is_pdb_format(data_path):
+        with start_action(action_type="pdb_input_detected", pdb_path=str(data_path), chains=chain_list):
+            typer.echo(f"🔄 PDB/CIF input detected, converting to JSONL...")
+            temp_jsonl_file = convert_pdb_to_jsonl_temp(data_path, chains=chain_list)
+            actual_data_path = temp_jsonl_file
+            # For PDB input, ignore start_line and num_lines
+            start_line = 0
+            num_lines = None
+            typer.echo(f"✓ Converted to temporary file")
+    
+    try:
+        with start_action(action_type="generate_embeddings", data_path=str(actual_data_path), output_path=str(output_path), start_line=start_line, num_lines=num_lines, batch_size=batch_size, chunk_size=chunk_size) as action:
+            # Load model
+            with start_action(action_type="load_model"):
+                model: Union[PredictionModel, ProteinInterfaceModel, DenoisePretrainModel] = load_model(model_ckpt, model_config, model_weights)
             
-            # Convert DenoisePretrainModel to PredictionModel if needed
-            if isinstance(model, DenoisePretrainModel) and not isinstance(model, PredictionModel):
-                model = PredictionModel.load_from_pretrained(model_ckpt)
+            # Prepare dataset
+            with start_action(action_type="prepare_dataset", data_file=str(actual_data_path), start_idx=start_line, num_lines=num_lines):
+                if isinstance(model, ProteinInterfaceModel):
+                    with start_action(action_type="extracting_prot_model"):
+                        model = model.prot_model
+                    dataset: Union[PDBDataset, ProtInterfaceDataset] = ProtInterfaceDataset(str(actual_data_path), start_idx=start_line, num_lines=num_lines)
+                else:
+                    dataset: Union[PDBDataset, ProtInterfaceDataset] = PDBDataset(str(actual_data_path), start_idx=start_line, num_lines=num_lines)
+                
+                # Convert DenoisePretrainModel to PredictionModel if needed
+                if isinstance(model, DenoisePretrainModel) and not isinstance(model, PredictionModel):
+                    model = PredictionModel.load_from_pretrained(model_ckpt)
+                
+                model = model.to(device)
             
-            model = model.to(device)
-        
-        # Stream embeddings to parquet (memory efficient)
-        with start_action(action_type="streaming_mode", chunk_size=chunk_size, compression=compression):
-            processed_items = stream_embeddings_to_parquet(
-                model=model,
-                dataset=dataset,
-                output_path=output_path,
-                batch_size=batch_size,
-                device=device,
-                compression=compression,
-                chunk_size=chunk_size
-            )
-        
-        # Calculate and log final benchmarks
-        total_elapsed: float = time.time() - start_time
-        total_seconds_per_embedding: float = total_elapsed / processed_items if processed_items > 0 else 0
-        
-        with start_action(
-            action_type="benchmark_summary",
-            total_embeddings=processed_items,
-            total_time_seconds=round(total_elapsed, 2),
-            seconds_per_embedding=round(total_seconds_per_embedding, 4),
-            throughput_embeddings_per_second=round(processed_items / total_elapsed, 2) if total_elapsed > 0 else 0
-        ):
-            pass
+            # Stream embeddings to parquet (memory efficient)
+            with start_action(action_type="streaming_mode", chunk_size=chunk_size, compression=compression):
+                processed_items = stream_embeddings_to_parquet(
+                    model=model,
+                    dataset=dataset,
+                    output_path=output_path,
+                    batch_size=batch_size,
+                    device=device,
+                    compression=compression,
+                    chunk_size=chunk_size
+                )
+            
+            # Calculate and log final benchmarks
+            total_elapsed: float = time.time() - start_time
+            total_seconds_per_embedding: float = total_elapsed / processed_items if processed_items > 0 else 0
+            
+            with start_action(
+                action_type="benchmark_summary",
+                total_embeddings=processed_items,
+                total_time_seconds=round(total_elapsed, 2),
+                seconds_per_embedding=round(total_seconds_per_embedding, 4),
+                throughput_embeddings_per_second=round(processed_items / total_elapsed, 2) if total_elapsed > 0 else 0
+            ):
+                pass
+    finally:
+        # Clean up temporary JSONL file if created
+        if temp_jsonl_file and temp_jsonl_file.exists():
+            temp_jsonl_file.unlink()
+            with start_action(action_type="cleanup_temp_file", temp_file=str(temp_jsonl_file)):
+                pass
 
 
 if __name__ == "__main__":

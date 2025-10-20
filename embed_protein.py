@@ -26,6 +26,7 @@ from data.converter.pdb_to_list_blocks import pdb_to_list_blocks
 from models.prediction_model import PredictionModel
 from models.prot_interface_model import ProteinInterfaceModel
 from trainers.abs_trainer import Trainer
+from pdb_converter import pdb_to_jsonl_item
 
 
 app = typer.Typer(
@@ -147,12 +148,14 @@ def process_protein_structure(
 ) -> Dict[str, Any]:
     """Process protein structure into ATOMICA format.
     
+    Uses shared pdb_to_jsonl_item converter function.
+    
     Args:
         pdb_file: Path to PDB/CIF file
         pdb_id: Identifier for this structure
         chains: List of chain IDs to process (None = all chains)
-        interface_dist_th: Distance threshold for interface detection
-        fragmentation_method: Fragmentation method for small molecules
+        interface_dist_th: Distance threshold for interface detection (unused, kept for compatibility)
+        fragmentation_method: Fragmentation method for small molecules (unused, kept for compatibility)
     
     Returns:
         Dictionary with processed structure data
@@ -162,42 +165,9 @@ def process_protein_structure(
         pdb_file=str(pdb_file),
         chains=chains
     ) as action:
-        # Extract blocks from PDB
-        blocks, pdb_indexes = pdb_to_list_blocks(
-            str(pdb_file),
-            selected_chains=chains,
-            return_indexes=True,
-            use_model=0
-        )
-        
-        # Flatten if needed (when all chains are treated as one entity)
-        if isinstance(blocks[0], list) and len(blocks) == 1:
-            blocks = blocks[0]
-            pdb_indexes = pdb_indexes[0]
-        elif isinstance(blocks[0], list):
-            # Multiple chains - concatenate them
-            blocks = sum(blocks, [])
-            pdb_indexes = sum(pdb_indexes, [])
-        
-        if len(blocks) == 0:
-            raise ValueError(f"No blocks extracted from {pdb_file}")
-        
-        # Convert blocks to data format (single entity)
-        data = blocks_to_data(blocks)
-        
-        # Create mapping from block index to PDB indexes
-        pdb_indexes_map = dict(
-            zip(range(1, len(blocks) + 1), pdb_indexes)  # +1 for global block
-        )
-        
-        chain_str = "_".join(chains) if chains else "all"
-        item = {
-            "data": data,
-            "block_to_pdb_indexes": pdb_indexes_map,
-            "id": f"{pdb_id}_{chain_str}",
-        }
-        
-        action.log(message_type="processed_structure", num_blocks=len(blocks))
+        # Use shared converter function
+        item = pdb_to_jsonl_item(pdb_file, pdb_id=pdb_id, chains=chains)
+        action.log(message_type="processed_structure", num_blocks=len(item["data"]["B"]))
         return item
 
 

@@ -783,6 +783,19 @@ def compressed_jsonl_to_dataset(input_file, start_idx: int = 0, num_lines: int |
 def open_data_file(data_file, start_idx: int = 0, num_lines: int | None = None):
     if data_file.endswith('.jsonl.gz'):
         return compressed_jsonl_to_dataset(data_file, start_idx=start_idx, num_lines=num_lines)
+    elif data_file.endswith('.jsonl'):
+        # Support plain JSONL files (not just compressed)
+        import orjson
+        dataset = []
+        with open(data_file, 'r') as f:
+            for i, line in enumerate(f):
+                if i < start_idx:
+                    continue
+                if num_lines is not None and i >= start_idx + num_lines:
+                    break
+                item = orjson.loads(line)
+                dataset.append(item)
+        return dataset
     elif data_file.endswith('.pkl'):
         with open(data_file, 'rb') as f:
             return pickle.load(f)

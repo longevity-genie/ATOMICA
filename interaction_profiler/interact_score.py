@@ -1,8 +1,9 @@
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, List
 import sys
 import time
+import tempfile
 
 import numpy as np
 import json
@@ -10,13 +11,51 @@ import torch
 import typer
 from tqdm import tqdm
 from eliot import start_action
+import orjson
+import biotite.structure.io.pdb as pdb
+import biotite.structure.io.pdbx as pdbx
 
 from data.pdb_utils import VOCAB
 from data.dataset import PDBDataset
 from trainers.abs_trainer import Trainer
 from models.prediction_model import PredictionModel
 
+# Import from parent directory
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from pdb_converter import pdb_to_jsonl_item
+
 app = typer.Typer(help="Compute interaction scores for protein structures", add_completion=False)
+
+
+def is_pdb_format(file_path: Path) -> bool:
+    """Check if file is PDB/CIF format (vs JSONL/pickle)."""
+    suffix = file_path.suffix.lower()
+    if suffix in ['.pdb', '.cif', '.ent']:
+        return True
+    if suffix == '.gz':
+        stem_suffix = Path(file_path.stem).suffix.lower()
+        return stem_suffix in ['.pdb', '.cif', '.ent']
+    return False
+
+
+def convert_pdb_to_jsonl_temp(
+    pdb_path: Path,
+    chains: Optional[List[str]] = None
+) -> Path:
+    """Convert PDB/CIF file to temporary JSONL file."""
+    with start_action(action_type="convert_pdb_to_jsonl", pdb_path=str(pdb_path), chains=chains):
+        temp_file = Path(tempfile.mktemp(suffix='.jsonl'))
+        item = pdb_to_jsonl_item(pdb_path, chains=chains)
+        
+        # Convert integer keys to strings for orjson compatibility
+        if 'block_to_pdb_indexes' in item and isinstance(item['block_to_pdb_indexes'], dict):
+            item['block_to_pdb_indexes'] = {str(k): v for k, v in item['block_to_pdb_indexes'].items()}
+        
+        with open(temp_file, 'w') as f:
+            f.write(orjson.dumps(item).decode('utf-8') + '\n')
+        return temp_file
 
 
 def mask_block(data: dict[str, Any], block_idx: int) -> dict[str, Any]:
@@ -109,28 +148,191 @@ def get_residue_model_scores(
     return cos_distances, block_idx
 
 
+def get_residue_info_from_pdb(
+    pdb_file: Path,
+    block_indices: list[int],
+    scores: list[float]
+) -> list[dict[str, Any]]:
+    """Extract residue information from PDB file.
+    
+    Args:
+        pdb_file: Path to PDB/CIF file
+        block_indices: List of block indices
+        scores: List of ATOMICA scores
+        
+    Returns:
+        List of dictionaries with residue information
+    """
+    # Load structure
+    if pdb_file.suffix == '.cif':
+        pdbx_file = pdbx.PDBxFile.read(str(pdb_file))
+        structure = pdbx.get_structure(pdbx_file, model=1)
+    else:
+        pdb_file_obj = pdb.PDBFile.read(str(pdb_file))
+        structure = pdb.get_structure(pdb_file_obj, model=1)
+    
+    # Get CA atoms (one per residue)
+    ca_atoms = structure[structure.atom_name == 'CA']
+    
+    residues = []
+    for idx, score in zip(block_indices, scores):
+        if idx < len(ca_atoms):
+            atom = ca_atoms[idx]
+            residues.append({
+                'block_idx': idx,
+                'chain_id': atom.chain_id,
+                'res_id': atom.res_id,
+                'res_name': atom.res_name,
+                'atomica_score': float(score),
+                'importance_delta': float((1 - score) * 100),
+            })
+    return residues
+
+
+def generate_pymol_commands(
+    residues: list[dict[str, Any]],
+    structure_id: str,
+    top_n: int = 10
+) -> str:
+    """Generate PyMOL commands for visualization.
+    
+    Args:
+        residues: List of residue dictionaries sorted by importance
+        structure_id: Structure identifier
+        top_n: Number of top residues to highlight
+        
+    Returns:
+        PyMOL command script as string
+    """
+    top_res = residues[:top_n]
+    res_ids = [r['res_id'] for r in top_res]
+    chain = top_res[0]['chain_id']
+    res_str = '+'.join([str(r) for r in res_ids])
+    
+    commands = f"""# ============================================================
+# PyMOL Commands for {structure_id}
+# ============================================================
+# Copy and paste these commands into PyMOL
+# ============================================================
+
+# Load structure (adjust path as needed)
+load {structure_id}.pdb
+
+# Basic setup
+hide all
+show cartoon
+color grey80, all
+
+# Select and highlight critical residues (Top {top_n})
+select critical_top{top_n}, resi {res_str} and chain {chain}
+show sticks, critical_top{top_n}
+color red, critical_top{top_n}
+set stick_radius, 0.3, critical_top{top_n}
+
+# Label critical residues
+label critical_top{top_n} and name CA, "%s%s" % (resn,resi)
+set label_size, 14
+set label_color, red
+
+# Create gradient coloring by importance (Top 5 in different reds)
+"""
+    
+    # Individual residue selections with gradient colors
+    colors = ['red', 'tv_red', 'salmon', 'lightsalmon', 'warmpink']
+    for i, res in enumerate(top_res[:5]):
+        commands += f"select critical_rank{i+1}, resi {res['res_id']} and chain {res['chain_id']}\n"
+        commands += f"color {colors[i]}, critical_rank{i+1}\n"
+    
+    commands += f"""
+# Show surface around critical residues
+show surface, byres (critical_top{top_n} around 5)
+set surface_color, white
+set transparency, 0.5
+
+# Center view on critical residues
+zoom critical_top{top_n}
+
+# ============================================================
+# Additional useful commands:
+# ============================================================
+# To save session: save {structure_id}_critical.pse
+# To save image: png {structure_id}_critical.png, dpi=300
+# To highlight most critical (rank 1): select most_critical, critical_rank1
+# ============================================================
+"""
+    return commands
+
+
+def generate_tsv_report(
+    residues: list[dict[str, Any]],
+    structure_id: str,
+    structure_name: str,
+    scores: list[float]
+) -> str:
+    """Generate TSV report with all critical residues.
+    
+    Args:
+        residues: List of residue dictionaries sorted by importance
+        structure_id: Structure identifier
+        structure_name: Human-readable structure name
+        scores: List of all ATOMICA scores
+        
+    Returns:
+        TSV formatted string with headers
+    """
+    # Header with metadata as comments
+    tsv = f"# ATOMICA Critical Residue Analysis: {structure_name}\n"
+    tsv += f"# Structure ID: {structure_id}\n"
+    tsv += f"# Total residues analyzed: {len(residues)}\n"
+    tsv += f"# Mean ATOMICA_SCORE: {np.mean(scores):.6f}\n"
+    tsv += f"# Std Dev: {np.std(scores):.6f}\n"
+    tsv += f"# Method: ATOMICA_SCORE (cosine similarity with masked residues)\n"
+    tsv += f"# Lower scores = More critical for intermolecular interactions\n"
+    tsv += "#\n"
+    
+    # Column headers
+    tsv += "Rank\tChain_ID\tResidue_ID\tResidue_Name\tATOMICA_Score\tImportance_Delta_Percent\tBlock_Index\n"
+    
+    # Data rows
+    for i, res in enumerate(residues, 1):
+        tsv += f"{i}\t{res['chain_id']}\t{res['res_id']}\t{res['res_name']}\t{res['atomica_score']:.6f}\t{res['importance_delta']:.4f}\t{res['block_idx']}\n"
+    
+    return tsv
+
+
 @app.command()
 def compute_interact_scores(
     data_path: Path = typer.Option(
-        ..., help="Path to the data file", exists=True, file_okay=True
+        ..., help="Path to data file (JSON/JSONL/pickle) or PDB/CIF file", exists=True, file_okay=True
     ),
     output_path: Path = typer.Option(
         ..., help="Output JSON file for importance scores", file_okay=True
     ),
-    model_ckpt: Path = typer.Option(
-        ..., help="Path to the model checkpoint", exists=True, file_okay=True
+    model_ckpt: Optional[Path] = typer.Option(
+        None, help="Path to the model checkpoint (or use --model-config and --model-weights)", exists=True, file_okay=True
+    ),
+    model_config: Optional[Path] = typer.Option(
+        None, help="Path to model config JSON (alternative to --model-ckpt)", exists=True, file_okay=True
+    ),
+    model_weights: Optional[Path] = typer.Option(
+        None, help="Path to model weights (alternative to --model-ckpt)", exists=True, file_okay=True
+    ),
+    chains: Optional[str] = typer.Option(
+        None, help="Comma-separated chain IDs (e.g., 'A,B') - only for PDB/CIF input"
     ),
     start_idx: int = typer.Option(
-        0, help="Start index for processing (useful for large files)"
+        0, help="Start index for processing (useful for large files) - ignored for PDB input"
     ),
     num_lines: int | None = typer.Option(
-        None, help="Maximum number of lines to process (None = all lines)"
+        None, help="Maximum number of lines to process (None = all lines) - ignored for PDB input"
     ),
     summary_path: Path | None = typer.Option(
         None, help="Optional path to save processing summary report (JSON)"
     ),
 ) -> None:
     """Compute interaction scores (importance of each block) for protein structures.
+    
+    Supports both JSONL/pickle format and direct PDB/CIF input.
     
     This tool evaluates how much each block (residue or molecule) contributes to
     the model's predictions by measuring the cosine similarity between original
@@ -148,23 +350,49 @@ def compute_interact_scores(
           --num-lines 1000 \\
           --summary-path summary.json
     """
-    with start_action(
-        action_type="compute_interact_scores",
-        data_path=str(data_path),
-        output_path=str(output_path),
-        model_ckpt=str(model_ckpt),
-        start_idx=start_idx,
-        num_lines=num_lines,
-        summary_path=str(summary_path) if summary_path else None,
-    ) as action:
-        # Clear CUDA cache before starting
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        
-        model = PredictionModel.load_from_pretrained(str(model_ckpt))
-        model = model.to("cuda")
+    # Parse chains if provided
+    chain_list: Optional[List[str]] = None
+    if chains:
+        chain_list = [c.strip() for c in chains.split(",")]
+    
+    # Detect if input is PDB format and convert if needed
+    temp_jsonl_file: Optional[Path] = None
+    actual_data_path = data_path
+    
+    if is_pdb_format(data_path):
+        print(f"🔄 PDB/CIF input detected, converting to JSONL...")
+        temp_jsonl_file = convert_pdb_to_jsonl_temp(data_path, chains=chain_list)
+        actual_data_path = temp_jsonl_file
+        # For PDB input, ignore start_idx and num_lines
+        start_idx = 0
+        num_lines = None
+        print(f"✓ Converted to temporary file")
+    
+    try:
+        with start_action(
+            action_type="compute_interact_scores",
+            data_path=str(actual_data_path),
+            output_path=str(output_path),
+            model_ckpt=str(model_ckpt),
+            start_idx=start_idx,
+            num_lines=num_lines,
+            summary_path=str(summary_path) if summary_path else None,
+        ) as action:
+            # Clear CUDA cache before starting
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            
+            # Load model
+            if model_ckpt:
+                model = PredictionModel.load_from_pretrained(str(model_ckpt))
+            elif model_config and model_weights:
+                model = PredictionModel.load_from_config_and_weights(str(model_config), str(model_weights))
+            else:
+                raise ValueError("Either model_ckpt or both model_config and model_weights must be provided")
+            
+            model = model.to("cuda")
 
-        dataset = PDBDataset(str(data_path), start_idx=start_idx, num_lines=num_lines)
+            dataset = PDBDataset(str(actual_data_path), start_idx=start_idx, num_lines=num_lines)
         
         times: list[float] = []
         peak_memory_per_structure: list[float] = []
@@ -256,6 +484,65 @@ def compute_interact_scores(
             with open(summary_path, "w") as f:
                 json.dump(summary_report, f, indent=2)
             print(f"Summary report saved to: {summary_path}")
+        
+        # Generate extended analysis with residue information (only for PDB inputs)
+        if is_pdb_format(data_path) and len(dataset) == 1:
+            print("\n" + "="*70)
+            print("GENERATING EXTENDED ANALYSIS")
+            print("="*70)
+            
+            # Load the interaction scores
+            with open(output_path, "r") as f:
+                interact_data = json.loads(f.readline())
+            
+            scores = interact_data['cos_distances']
+            block_indices = interact_data['block_idx']
+            structure_id = Path(data_path).stem
+            
+            # Extract residue information from PDB
+            try:
+                residues = get_residue_info_from_pdb(data_path, block_indices, scores)
+                
+                # Sort by importance (lowest score = most critical)
+                residues_sorted = sorted(residues, key=lambda x: x['atomica_score'])
+                
+                # Display top 10 critical residues
+                print(f"\n🔴 TOP 10 MOST CRITICAL RESIDUES:")
+                print(f"\n{'Rank':<6} {'Residue':<10} {'Chain':<7} {'Position':<10} {'ATOMICA_SCORE':<15} {'Importance Delta':<15}")
+                print('-'*70)
+                for i, res in enumerate(residues_sorted[:10], 1):
+                    res_label = f"{res['res_name']}{res['res_id']}"
+                    print(f"{i:<6} {res_label:<10} {res['chain_id']:<7} {res['res_id']:<10} {res['atomica_score']:.6f}      {res['importance_delta']:.4f}%")
+                
+                # Generate TSV report with all residues
+                output_dir = output_path.parent
+                report_file = output_dir / f"{structure_id}_critical_residues.tsv"
+                tsv_text = generate_tsv_report(
+                    residues_sorted, 
+                    structure_id, 
+                    interact_data['id'], 
+                    scores
+                )
+                with open(report_file, 'w', encoding='utf-8') as f:
+                    f.write(tsv_text)
+                print(f"\n✅ Saved TSV report: {report_file} ({len(residues_sorted)} residues)")
+                
+                # Generate PyMOL commands
+                pymol_file = output_dir / f"{structure_id}_pymol_commands.pml"
+                pymol_cmds = generate_pymol_commands(residues_sorted, structure_id, top_n=10)
+                with open(pymol_file, 'w', encoding='utf-8') as f:
+                    f.write(pymol_cmds)
+                print(f"✅ Saved PyMOL commands: {pymol_file}")
+                
+                print(f"\n💡 To visualize in PyMOL:")
+                print(f"   1. Open structure: pymol {data_path}")
+                print(f"   2. Run script: @{pymol_file}")
+                print(f"   Or copy-paste commands from: {pymol_file}")
+                print(f"\n📊 To analyze residues: Open {report_file} in Excel/LibreOffice")
+                
+            except Exception as e:
+                print(f"⚠️  Could not generate extended analysis: {e}")
+        
         print()
         
         action.add_success_fields(
@@ -266,6 +553,10 @@ def compute_interact_scores(
             max_memory_mb=round(max_memory, 2),
             summary_saved=summary_path is not None,
         )
+    finally:
+        # Clean up temporary JSONL file if created
+        if temp_jsonl_file and temp_jsonl_file.exists():
+            temp_jsonl_file.unlink()
 
 
 if __name__ == "__main__":

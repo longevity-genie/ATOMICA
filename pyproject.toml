@@ -1,45 +1,46 @@
 [project]
 name = "atomica"
-version = "0.1.0"
+version = "0.1.1"
 description = "ATOMICA: A deep learning model for molecular structure prediction"
 readme = "README.md"
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.14"
 dependencies = [
-    "numpy==1.26.4",
-    "torch==2.1.1",
+    "numpy>=1.26.4,<2.2",
+    "torch>=2.1.1,<2.6",
     "torch-scatter",
     "torch-cluster",
-    "tensorboard==2.18.0",
-    "e3nn==0.5.1",
-    "scipy==1.13.1",
-    "rdkit-pypi==2022.9.5",
-    "openbabel-wheel==3.1.1.20",
-    "biopython==1.84",
-    "biotite==0.40.0",
-    "atom3d",
-    "wandb==0.18.2",
-    "orjson",
-    "umap-learn",
-    "matplotlib",
-    "seaborn",
-    "plotly",
-    "typer>=0.19.2",
-    "eliot>=1.17.5",
-    "requests>=2.31.0",
-    "polars>=1.34.0",
-    "pycomfort>=0.0.18",
+    "tensorboard>=2.18.0,<2.19",
+    "e3nn>=0.5.1,<0.6",
+    "scipy>=1.13.1,<1.15",
+    "rdkit>=2023.9.5",
+    "openbabel-wheel>=3.1.1.20",
+    "biopython>=1.84,<1.85",
+    "biotite>=0.40.0,<0.46",
+    "atom3d>=0.2.6",
+    "wandb>=0.18.2,<0.20",
+    "orjson>=3.9.0,<4.0",
+    "umap-learn>=0.5.3,<0.6",
+    "matplotlib>=3.8.0,<3.10",
+    "seaborn>=0.13.0,<0.14",
+    "plotly>=5.17.0,<6.0",
+    "typer>=0.19.2,<1.0",
+    "eliot>=1.17.5,<2.0",
+    "requests>=2.31.0,<2.33",
+    "polars>=1.34.0,<1.38",
+    "pycomfort>=0.0.18,<0.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-cov",
-    "ruff",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
 ]
 
 [project.scripts]
 embed = "get_embeddings:app"
-interact-profiler = "interaction_profiler:app"
+interact-profiler = "interaction_profiler.interact_score:app"
+pdb-converter = "pdb_converter:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -50,7 +51,7 @@ packages = ["models", "data", "trainers", "utils", "interaction_profiler"]
 
 [tool.uv]
 # PyTorch Geometric wheels for torch-scatter and torch-cluster
-find-links = ["https://pytorch-geometric.com/whl/torch-2.1.1+cu118.html"]
+find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu118.html"]
 
 [tool.uv.sources]
 # Only torch uses CUDA 11.8 specific index
