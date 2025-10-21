@@ -41,6 +41,7 @@ dev = [
 embed = "get_embeddings:app"
 interact-score = "interaction_profiler.interact_score:app"
 pdb-converter = "pdb_converter:app"
+pdb-downloader = "pdb_downloader:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -50,6 +51,7 @@ build-backend = "hatchling.build"
 packages = ["models", "data", "trainers", "utils", "interaction_profiler"]
 
 [tool.uv]
+preview = true
 # PyTorch Geometric wheels for torch-scatter and torch-cluster
 # Using CUDA 12.1 wheels which are compatible with CUDA 12.6
 find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu121.html"]

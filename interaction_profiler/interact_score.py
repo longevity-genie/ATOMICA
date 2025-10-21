@@ -95,7 +95,7 @@ def mask_block(data: dict[str, Any], block_idx: int) -> dict[str, Any]:
 
 
 def get_residue_model_score(
-    model: PredictionModel, data: dict[str, Any], block_idx: int
+    model: PredictionModel, data: dict[str, Any], block_idx: int, device: str = "cuda"
 ) -> float:
     """Calculate cosine similarity score for a masked block.
     
@@ -103,6 +103,7 @@ def get_residue_model_score(
         model: The prediction model
         data: The input data dictionary
         block_idx: Index of the block to evaluate
+        device: Device to use for computation ('cuda' or 'cpu')
         
     Returns:
         Cosine similarity score between original and masked predictions
@@ -111,7 +112,7 @@ def get_residue_model_score(
         model.eval()
         masked_data = mask_block(data, block_idx)
         batch = PDBDataset.collate_fn([data, masked_data])
-        batch = Trainer.to_device(batch, "cuda")
+        batch = Trainer.to_device(batch, device)
         output = model(
             batch["X"],
             batch["B"],
@@ -127,13 +128,14 @@ def get_residue_model_score(
 
 
 def get_residue_model_scores(
-    model: PredictionModel, data: dict[str, Any]
+    model: PredictionModel, data: dict[str, Any], device: str = "cuda"
 ) -> tuple[list[float], list[int]]:
     """Calculate cosine similarity scores for all blocks in the data.
     
     Args:
         model: The prediction model
         data: The input data dictionary
+        device: Device to use for computation ('cuda' or 'cpu')
         
     Returns:
         Tuple of (cosine_distances, block_indices) for non-GLB blocks
@@ -143,7 +145,7 @@ def get_residue_model_scores(
     for i in range(len(data["B"])):
         if data["B"][i] == VOCAB.symbol_to_idx(VOCAB.GLB):
             continue
-        cos_distances.append(get_residue_model_score(model, data, i))
+        cos_distances.append(get_residue_model_score(model, data, i, device))
         block_idx.append(i)
     return cos_distances, block_idx
 
@@ -329,6 +331,9 @@ def interact_score(
     summary_path: Path | None = typer.Option(
         None, help="Path to save processing summary report (default: output/{input_stem}_summary.json)"
     ),
+    cpu: bool = typer.Option(
+        False, help="Use CPU instead of GPU for computation"
+    ),
 ) -> None:
     """Compute interaction scores (importance of each block) for protein structures.
     
@@ -404,6 +409,9 @@ def interact_score(
         typer.echo(f"✓ Converted to temporary file")
     
     try:
+        # Set device
+        device = "cpu" if cpu else "cuda"
+        
         with start_action(
             action_type="interact_score",
             input=str(actual_data_path),
@@ -412,10 +420,12 @@ def interact_score(
             start_idx=start_idx,
             num_lines=num_lines,
             summary_path=str(summary_path) if summary_path else None,
+            device=device,
         ) as action:
-            # Clear CUDA cache before starting
-            torch.cuda.empty_cache()
-            torch.cuda.reset_peak_memory_stats()
+            # Clear CUDA cache before starting (only if using GPU)
+            if not cpu:
+                torch.cuda.empty_cache()
+                torch.cuda.reset_peak_memory_stats()
             
             # Load model
             if model_ckpt:
@@ -425,7 +435,7 @@ def interact_score(
             else:
                 raise ValueError("Either model_ckpt or both model_config and model_weights must be provided")
             
-            model = model.to("cuda")
+            model = model.to(device)
 
             dataset = PDBDataset(str(actual_data_path), start_idx=start_idx, num_lines=num_lines)
         
@@ -435,15 +445,19 @@ def interact_score(
         
         for i in tqdm(range(len(dataset)), total=len(dataset), desc="Processing structures"):
             structure_start = time.perf_counter()
-            torch.cuda.reset_peak_memory_stats()
+            if not cpu:
+                torch.cuda.reset_peak_memory_stats()
             
-            cos_distances, block_idx = get_residue_model_scores(model, dataset[i])
+            cos_distances, block_idx = get_residue_model_scores(model, dataset[i], device)
             
             structure_time = time.perf_counter() - structure_start
             times.append(structure_time)
             
-            # Get peak memory usage for this structure (in MB)
-            peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+            # Get peak memory usage for this structure (in MB) - only for GPU
+            if not cpu:
+                peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+            else:
+                peak_memory_mb = 0.0  # Not tracking CPU memory
             peak_memory_per_structure.append(peak_memory_mb)
             
             result = {
@@ -459,11 +473,14 @@ def interact_score(
             # Log metrics periodically
             if (i + 1) % 10 == 0:
                 avg_time = np.mean(times[-10:])
-                avg_memory = np.mean(peak_memory_per_structure[-10:])
-                tqdm.write(
-                    f"[{i+1:6d}] Avg time (last 10): {avg_time:.2f}s, "
-                    f"Avg memory (last 10): {avg_memory:.1f} MB"
-                )
+                if not cpu:
+                    avg_memory = np.mean(peak_memory_per_structure[-10:])
+                    tqdm.write(
+                        f"[{i+1:6d}] Avg time (last 10): {avg_time:.2f}s, "
+                        f"Avg memory (last 10): {avg_memory:.1f} MB"
+                    )
+                else:
+                    tqdm.write(f"[{i+1:6d}] Avg time (last 10): {avg_time:.2f}s")
 
         total_time = time.perf_counter() - total_start
         
@@ -472,9 +489,6 @@ def interact_score(
         std_time = np.std(times)
         min_time = np.min(times)
         max_time = np.max(times)
-        
-        avg_memory = np.mean(peak_memory_per_structure)
-        max_memory = np.max(peak_memory_per_structure)
         
         # Create summary report
         summary_report = {
@@ -487,20 +501,27 @@ def interact_score(
                 "min": round(min_time, 4),
                 "max": round(max_time, 4),
             },
-            "gpu_memory_mb": {
-                "mean": round(avg_memory, 2),
-                "max": round(max_memory, 2),
-            },
             "output_file": str(output),
             "input_file": str(input),
             "start_idx": start_idx,
             "num_lines": num_lines,
+            "device": device,
         }
+        
+        # Add GPU memory stats only if using GPU
+        if not cpu:
+            avg_memory = np.mean(peak_memory_per_structure)
+            max_memory = np.max(peak_memory_per_structure)
+            summary_report["gpu_memory_mb"] = {
+                "mean": round(avg_memory, 2),
+                "max": round(max_memory, 2),
+            }
         
         # Print summary to console
         typer.echo("\n" + "="*70)
         typer.echo("PROCESSING SUMMARY")
         typer.echo("="*70)
+        typer.echo(f"Device: {device.upper()}")
         typer.echo(f"Total structures processed: {summary_report['total_structures']}")
         typer.echo(f"Total time: {summary_report['total_time_seconds']:.2f}s "
               f"({summary_report['total_time_minutes']:.2f} minutes)")
@@ -509,8 +530,9 @@ def interact_score(
               f"(min: {summary_report['time_per_structure']['min']:.2f}s, "
               f"max: {summary_report['time_per_structure']['max']:.2f}s)")
         typer.echo(f"Estimated remaining time per structure: ~{summary_report['time_per_structure']['mean']:.2f}s")
-        typer.echo(f"\nGPU Memory per structure: {summary_report['gpu_memory_mb']['mean']:.1f} MB (avg), "
-              f"{summary_report['gpu_memory_mb']['max']:.1f} MB (peak)")
+        if not cpu:
+            typer.echo(f"\nGPU Memory per structure: {summary_report['gpu_memory_mb']['mean']:.1f} MB (avg), "
+                  f"{summary_report['gpu_memory_mb']['max']:.1f} MB (peak)")
         typer.echo("="*70)
         typer.echo(f"Output saved to: {output}")
         
@@ -579,15 +601,20 @@ def interact_score(
         
         typer.echo()
         
-        action.add_success_fields(
-            num_structures=len(dataset),
-            total_time_seconds=round(total_time, 2),
-            avg_time_per_structure=round(avg_time, 4),
-            avg_memory_mb=round(avg_memory, 2),
-            max_memory_mb=round(max_memory, 2),
-            summary_saved=True,
-            summary_path=str(summary_path),
-        )
+        success_fields = {
+            "num_structures": len(dataset),
+            "total_time_seconds": round(total_time, 2),
+            "avg_time_per_structure": round(avg_time, 4),
+            "summary_saved": True,
+            "summary_path": str(summary_path),
+            "device": device,
+        }
+        
+        if not cpu:
+            success_fields["avg_memory_mb"] = round(avg_memory, 2)
+            success_fields["max_memory_mb"] = round(max_memory, 2)
+        
+        action.add_success_fields(**success_fields)
     finally:
         # Clean up temporary JSONL file if created
         if temp_jsonl_file and temp_jsonl_file.exists():
