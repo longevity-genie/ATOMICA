@@ -5,7 +5,6 @@ from typing import Union
 
 import networkx as nx
 from rdkit import Chem
-from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Chem.rdchem import Mol as RDKitMol
 import numpy as np
 
@@ -210,6 +209,17 @@ class Molecule(nx.Graph):
     def to_SVG(self, path: str, size: tuple=(200, 200), add_idx=False) -> str:
         # save the subgraph-level molecule to an SVG image
         # return the content of svg in string format
+        # Lazy import to avoid X11 dependency issues on headless systems
+        try:
+            from rdkit.Chem.Draw import rdMolDraw2D
+        except ImportError as e:
+            raise ImportError(
+                "Failed to import rdMolDraw2D. This requires X11 libraries (libXrender, libXext). "
+                "On Rocky Linux/CentOS/RHEL: sudo yum install libXrender libXext libSM libXt\n"
+                "On Ubuntu/Debian: sudo apt-get install libxrender1 libxext6\n"
+                f"Original error: {e}"
+            ) from e
+        
         mol = self.to_rdkit_mol()
         if add_idx:  # this will produce an ugly figure
             for i in range(mol.GetNumAtoms()):

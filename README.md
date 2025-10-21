@@ -41,6 +41,8 @@ We use `uv` for dependency management. Install dependencies with:
 uv sync
 ```
 
+**Note:** Some features (molecule visualization) require system-level X11 libraries. Most operations (PDB download, conversion, embedding) work without these. See [docs/SYSTEM_DEPENDENCIES.md](docs/SYSTEM_DEPENDENCIES.md) for details.
+
 
 ### 3. (optional) Download Processed Datasets
 The data for pretraining and downstream analyses is hosted at [Harvard Dataverse](https://doi.org/10.7910/DVN/4DUBJX).
