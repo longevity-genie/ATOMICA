@@ -167,7 +167,7 @@ def get_residue_info_from_pdb(
     """
     # Load structure
     if pdb_file.suffix == '.cif':
-        pdbx_file = pdbx.PDBxFile.read(str(pdb_file))
+        pdbx_file = pdbx.CIFFile.read(str(pdb_file))
         structure = pdbx.get_structure(pdbx_file, model=1)
     else:
         pdb_file_obj = pdb.PDBFile.read(str(pdb_file))
