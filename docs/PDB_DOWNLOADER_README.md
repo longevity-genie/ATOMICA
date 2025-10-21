@@ -1,19 +1,20 @@
-# PDB Downloader CLI
+# PDB CLI
 
-A command-line interface for downloading PDB structures with optional metadata resolution.
+A unified command-line interface for PDB operations in ATOMICA.
 
 ## Features
 
-- Download PDB files in CIF or PDB format using biotite
-- Optional metadata resolution including organism information, UniProt IDs, resolution, etc.
-- Batch download from command line arguments or text files
-- Comprehensive logging with Eliot
-- Default downloads go to `downloads/pdbs/` directory
-- Metadata saved as JSON files alongside PDB files
+- **Download**: PDB files in CIF or PDB format using biotite
+- **Convert**: PDB/CIF files to JSONL format for ATOMICA models
+- **Metadata**: Optional metadata resolution including organism information, UniProt IDs, resolution, etc.
+- **Batch Processing**: Download and convert multiple files at once
+- **Comprehensive logging**: Eliot-based structured logging
+- **Default structure**: Downloads go to `downloads/pdbs/` directory
+- **Clean output**: No nested directories - files go directly to output folder
 
 ## Installation
 
-The PDB downloader is included with the ATOMICA project. Make sure all dependencies are installed:
+The PDB CLI is included with the ATOMICA project. Make sure all dependencies are installed:
 
 ```bash
 uv sync
@@ -21,26 +22,32 @@ uv sync
 
 ## Usage
 
-### Basic Usage
+The PDB CLI is accessed via the unified `pdb` command with subcommands:
+
+```bash
+uv run pdb --help
+```
+
+### Download PDB Files
 
 Download a single PDB file:
 
 ```bash
-uv run python -m pdb_downloader download 1tgr
+uv run pdb download 1tgr
 ```
 
 Download multiple PDB files:
 
 ```bash
-uv run python -m pdb_downloader download 1tgr 4xss 6pyh
+uv run pdb download 1tgr 4xss 6pyh
 ```
 
-### File Input
+### Download from File
 
 Download PDB files from a text file (one PDB ID per line):
 
 ```bash
-uv run python -m pdb_downloader download-from-file pdb_ids.txt
+uv run pdb download-from-file pdb_ids.txt
 ```
 
 Example `pdb_ids.txt`:
@@ -51,14 +58,29 @@ Example `pdb_ids.txt`:
 6pyh
 ```
 
-### Options
+### Convert PDB to JSONL
+
+Convert PDB/CIF files to JSONL format for ATOMICA models:
+
+```bash
+# Convert all CIF files in downloads/pdbs
+uv run pdb convert downloads/pdbs/*.cif --output-file structures.jsonl
+
+# Convert specific files
+uv run pdb convert 1tgr.cif 4xss.cif --output-file my_structures.jsonl
+
+# Convert with specific chains
+uv run pdb convert 1tgr.cif --output-file 1tgr.jsonl --chains A,B
+```
+
+### Download Options
 
 #### Output Directory
 
 Specify custom output directory:
 
 ```bash
-uv run python -m pdb_downloader download 1tgr --output-dir /path/to/custom/directory
+uv run pdb download 1tgr --output-dir /path/to/custom/directory
 ```
 
 Default: `downloads/pdbs/`
@@ -68,7 +90,7 @@ Default: `downloads/pdbs/`
 Choose between CIF (mmCIF) or PDB format:
 
 ```bash
-uv run python -m pdb_downloader download 1tgr --file-format pdb
+uv run pdb download 1tgr --file-format pdb
 ```
 
 Default: `cif` (recommended)
@@ -79,10 +101,10 @@ Control metadata download:
 
 ```bash
 # Disable metadata (download only PDB files)
-uv run python -m pdb_downloader download 1tgr --include-metadata false
+uv run pdb download 1tgr --include-metadata false
 
 # Specify custom metadata directory
-uv run python -m pdb_downloader download 1tgr --metadata-dir /path/to/metadata
+uv run pdb download 1tgr --metadata-dir /path/to/metadata
 ```
 
 Default: Downloads metadata alongside PDB files
@@ -92,7 +114,7 @@ Default: Downloads metadata alongside PDB files
 Enable detailed logging to files:
 
 ```bash
-uv run python -m pdb_downloader download 1tgr --log-to-file --log-file-name my_download
+uv run pdb download 1tgr --log-to-file --log-file-name my_download
 ```
 
 This creates:
@@ -103,23 +125,36 @@ This creates:
 
 ```bash
 # Set timeout and retry options for API calls
-uv run python -m pdb_downloader download 1tgr --timeout 30 --retries 5
+uv run pdb download 1tgr --timeout 30 --retries 5
 
 # Use local TSV files for metadata (if available)
-uv run python -m pdb_downloader download 1tgr --use-tsv true
+uv run pdb download 1tgr --use-tsv true
 ```
 
 ## Output Structure
 
+### Download Output
+
 ```
 downloads/pdbs/
-├── 1tgr.cif/           # PDB structure file
-│   └── 1tgr.cif
-├── 1tgr_metadata.json  # Metadata (if enabled)
-├── 4xss.cif/
-│   └── 4xss.cif
+├── 1tgr.cif            # PDB structure file
+├── 1tgr_metadata.json  # Metadata (organism, UniProt IDs, resolution, etc.)
+├── 4xss.cif
 └── 4xss_metadata.json
 ```
+
+### Convert Output
+
+The `convert` command creates JSONL.GZ files:
+
+```bash
+uv run pdb convert downloads/pdbs/*.cif --output-file structures.jsonl
+```
+
+This creates `structures.jsonl.gz` with one JSON object per line, each containing:
+- `id`: PDB identifier with chain info
+- `data`: Processed structure data for ATOMICA models
+- `block_to_pdb_indexes`: Mapping of block indices to PDB atom indices
 
 ## Metadata Format
 
@@ -179,16 +214,37 @@ Failed downloads are reported in the summary:
 
 ## Integration with ATOMICA
 
-The PDB downloader integrates with ATOMICA's existing infrastructure:
+The PDB CLI integrates seamlessly with ATOMICA's workflow:
 
-- Uses biotite for reliable PDB downloading (same as embed_protein.py)
-- Self-contained metadata resolution using biotite's RCSB API
-- Follows ATOMICA's logging and CLI patterns
-- Can be used as a preprocessing step for ATOMICA models
+- **Download**: Uses biotite for reliable PDB downloading (same as embed_protein.py)
+- **Convert**: Prepares structures in JSONL format for ATOMICA models
+- **Metadata**: Self-contained resolution using biotite's RCSB API
+- **Logging**: Follows ATOMICA's Eliot logging patterns
+
+### Complete Workflow Example
+
+```bash
+# 1. Download PDB structures with metadata
+uv run pdb download 1tgr 4xss 6pyh --include-metadata
+
+# 2. Convert to JSONL for ATOMICA training
+uv run pdb convert downloads/pdbs/*.cif --output-file training_data.jsonl
+
+# 3. Use with ATOMICA models
+# training_data.jsonl.gz can now be used with ATOMICA trainers
+```
+
+### Commands Overview
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `pdb download` | Download PDB structures with metadata | `uv run pdb download 1tgr` |
+| `pdb download-from-file` | Batch download from text file | `uv run pdb download-from-file ids.txt` |
+| `pdb convert` | Convert PDB/CIF to JSONL for ATOMICA | `uv run pdb convert *.cif --output-file data.jsonl` |
 
 ### Metadata Implementation
 
-The metadata resolution is implemented directly in the PDB downloader using biotite's RCSB API, providing:
+The metadata resolution is implemented directly in the PDB CLI using biotite's RCSB API, providing:
 - Structure titles and descriptions
 - Resolution and experimental methods
 - Chain information and organism details

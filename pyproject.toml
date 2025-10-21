@@ -40,8 +40,7 @@ dev = [
 [project.scripts]
 embed = "get_embeddings:app"
 interact-score = "interaction_profiler.interact_score:app"
-pdb-converter = "pdb_converter:app"
-pdb-downloader = "pdb_downloader:app"
+pdb = "pdb_cli:app"
 
 [build-system]
 requires = ["hatchling"]
