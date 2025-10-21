@@ -1,14 +1,14 @@
 [project]
 name = "atomica"
-version = "0.1.1"
+version = "0.1.2"
 description = "ATOMICA: A deep learning model for molecular structure prediction"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "numpy>=2.0,<2.4",
     "torch>=2.1.1,<2.6",
-    "torch-scatter",
-    "torch-cluster",
+    "torch-scatter>=2.1.2",
+    "torch-cluster>=1.6.3",
     "tensorboard>=2.18.0,<2.21",
     "e3nn>=0.5.1,<0.6",
     "scipy>=1.13.1,<1.17",
@@ -54,11 +54,7 @@ preview = true
 # PyTorch Geometric wheels for torch-scatter and torch-cluster
 # Using CUDA 12.1 wheels which are compatible with CUDA 12.6
 find-links = ["https://data.pyg.org/whl/torch-2.5.1+cu121.html"]
-
-# torch-cluster and torch-scatter need torch as a build dependency
-[tool.uv.extra-build-dependencies]
-torch-cluster = ["torch"]
-torch-scatter = ["torch"]
+no-build-package = ["torch-scatter", "torch-cluster"]
 
 [tool.uv.sources]
 # Only torch uses CUDA 12.1 specific index
